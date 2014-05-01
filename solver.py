@@ -1,44 +1,43 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-from collections import namedtuple
+import os
+import re
+import glob
+import time
+import hashlib
+from subprocess import Popen, PIPE
 
-Set = namedtuple("Set", ['index', 'cost', 'items'])
+def input_problem_name(input_data):
+    problem_size = '-'.join(re.split('\s+', input_data.splitlines()[0].strip()))
+    problem_hash = hashlib.sha1(input_data).hexdigest()[:4]
+    return problem_size + '(' + problem_hash + ')'
 
 def solve_it(input_data):
-    # Modify this code to run your optimization algorithm
+    process = Popen(os.getenv('SOLVER', './solver'), stdin=PIPE, stdout=PIPE, shell=True)
+    result = process.communicate(input=input_data)[0].strip()
+    if process.returncode != 0:
+        print result
+        sys.exit(process.returncode)
 
-    # parse the input
-    lines = input_data.split('\n')
+    if result:
+        directory = 'solutions'
+        if not os.path.exists(directory):
+            os.makedirs(directory)
 
-    parts = lines[0].split()
-    item_count = int(parts[0])
-    set_count = int(parts[1])
-    
-    sets = []
-    for i in range(1, set_count+1):
-        parts = lines[i].split()
-        sets.append(Set(i-1, float(parts[0]), map(int, parts[1:])))
+        problem_name = input_problem_name(input_data)
+        if result in [file(solution).read() for solution in glob.glob(directory + '/' + problem_name + '*')]:
+            print '\033[33mSolution already in «' +  directory + '»!\033[0m'
+        else:
+            result_value = '%.2f' % float(re.split('\s+', result, 1)[0])
+            current_time = time.strftime('%Y%m%d-%H%M%S')
+            file_name = problem_name + '=' + result_value + '[' + current_time + ']'
 
-    # build a trivial solution
-    # pick add sets one-by-one until all the items are covered
-    solution = [0]*set_count
-    coverted = set()
-    
-    for s in sets:
-        solution[s.index] = 1
-        coverted |= set(s.items)
-        if len(coverted) >= item_count:
-            break
-        
-    # calculate the cost of the solution
-    obj = sum([s.cost*solution[s.index] for s in sets])
+            f = file(directory + '/' + file_name, 'w')
+            f.write(result)
+            f.close
 
-    # prepare the solution in the specified output format
-    output_data = str(obj) + ' ' + str(0) + '\n'
-    output_data += ' '.join(map(str, solution))
-
-    return output_data
+    return result
 
 
 import sys

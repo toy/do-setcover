@@ -1,0 +1,80 @@
+#!/usr/bin/env ruby
+
+require 'digest/sha1'
+require 'fspath'
+require 'shellwords'
+
+input = $stdin.read
+entries = input.lines.map(&:strip).reject(&:empty?).map{ |line| line.split(/\s+/).map(&:to_i) }
+entries.first.length == 2 or 'Head line is not of two items'
+item_count, set_count = entries.shift
+entries.length == set_count or "Expected to get #{set_count} entries instead of #{entries.size}"
+set_costs = entries.map{ |e| e.first }
+set_items = entries.map{ |e| e.drop(1) }
+
+@name = "#{item_count}-#{set_count}(#{Digest::SHA1.hexdigest(input)[0, 4]})"
+@tmp = FSPath('tmp').tap(&:mkpath)
+
+def file_name(ext)
+  @tmp + "#{@name}#{ext}"
+end
+def write_file(ext, content = nil)
+  path = file_name(ext)
+  content = content.join("\n") if content.is_a?(Array)
+  unless path.exist? && path.read == content
+    $stderr.puts "Writing #{path}"
+    path.write content
+  end
+  path
+end
+
+costs_data = write_file '.costs.dat', set_count.times.map{ |s| "#{s} #{set_costs[s]}" }
+cover_data = write_file '.cover.dat', set_count.times.flat_map{ |s| set_items[s].map{ |i| "#{s} #{i}" } }
+
+zimpl = write_file '.zpl', <<-ZIMPL
+set ITEMS := { 0 .. #{item_count - 1} };
+set SETS := { 0 .. #{set_count - 1} };
+set COVER := { read "#{cover_data.expand_path}" as "<1n,2n>" };
+
+param costs[SETS] := read "#{costs_data.expand_path}" as "<1n> 2n";
+
+var open[SETS] binary;
+
+minimize cost: sum <s> in SETS : costs[s] * open[s];
+
+subto coverall: forall <i> in ITEMS : sum <s,i> in COVER : open[s] >= 1;
+ZIMPL
+
+solution = file_name "#{Time.now.strftime('%Y%m%d-%H%M%S')}.sol"
+
+time_limit = ENV['TIME_LIMIT'] ? ENV['TIME_LIMIT'].to_i : 60 * 60
+args = %w[scip] + begin
+  commands = []
+  commands << "set limits time #{time_limit}"
+  commands << "read #{zimpl}"
+  commands += @tmp.glob("#{@name}*.sol").map{ |s| "read #{s}" }
+  commands << "optimize"
+  commands << "write solution #{solution}"
+  commands << "quit"
+  commands.flat_map{ |c| ['-c', c.strip] }
+end
+
+abort unless system "#{args.shelljoin} 1>&2"
+
+value = nil
+optimal = false
+open = set_count.times.map{ 0 }
+solution.each_line do |line|
+  case line
+  when /^solution status: optimal solution found/
+    optimal = true
+  when /^objective value:\s+(?<v>\S+)/
+    value = $~[:v].to_f
+  when /^open#(?<s>\d+)/
+    open[$~[:s].to_i] = 1
+  end
+end
+
+if value && open.length == set_count
+  puts "#{value} #{optimal ? 1 : 0}", open.join(' ')
+end
